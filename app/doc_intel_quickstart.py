@@ -2,6 +2,49 @@
 import os
 from azure.ai.formrecognizer import DocumentAnalysisClient
 from azure.core.credentials import AzureKeyCredential
+import pandas as pd
+from hdbcli import dbapi
+from hana_ml.dataframe import ConnectionContext
+# import pandas as pd
+# import os
+from sqlalchemy import create_engine
+import pyhdb
+from sqlalchemy import create_engine, exc
+
+def connection():
+    try:
+        conn = create_engine('mysql+pymysql://root:root@localhost/stock')
+    except exc.SQLAlchemyError as e:
+        print(e)
+
+    return conn
+
+conn=connection()
+# connection = pyhdb.connect(
+#     host='03b7ba32-1aca-46d2-b2ab-7e832d9d8881.hana.trial-us10.hanacloud.ondemand.com',
+#     port=443,  # Default SAP HANA port
+#     user='DBADMIN',
+#     password='Acceron@123'
+# )
+
+# cursor = connection.cursor()
+
+
+sapconn = dbapi.connect(
+    address='03b7ba32-1aca-46d2-b2ab-7e832d9d8881.hana.trial-us10.hanacloud.ondemand.com',
+    port=443,
+    user='DBADMIN',
+    password='Acceron@123'
+)
+
+print('jj')
+cursor = sapconn.cursor()
+# insert_query = "INSERT INTO your_table_name (column1, column2, ...) VALUES (?, ?, ...)"
+
+# conn = dbapi.connect(address="03b7ba32-1aca-46d2-b2ab-7e832d9d8881.hana.trial-us10.hanacloud.ondemand.com",
+#                      port=443,user="03b7ba32-1aca-46d2-b2ab-7e832d9d8881.hana.trial-us10.hanacloud.ondemand.com", password="Acceron@123")
+# cursor = conn.cursor()
+# engine = create_engine('hana://DBADMIN:Acceron@123@03b7ba32-1aca-46d2-b2ab-7e832d9d8881.hana.trial-us10.hanacloud.ondemand.com:443')
 
 # set `<your-endpoint>` and `<your-key>` variables with the values from the Azure portal
 endpoint = "https://ai-adi.cognitiveservices.azure.com/"
@@ -19,6 +62,7 @@ def format_polygon(polygon):
 
 
 def analyze_invoice(invoiceUrl):
+    print(invoiceUrl)
     document_analysis_client = DocumentAnalysisClient(
         endpoint=endpoint, credential=AzureKeyCredential(key)
     )
@@ -33,6 +77,7 @@ def analyze_invoice(invoiceUrl):
     extracted = {}
 
     for idx, invoice in enumerate(invoices.documents):
+        print(invoice)
         print("--------Recognizing invoice #{}--------".format(idx + 1))
         extracted[f'invoice{idx+1}'] = {}
         vendor_name = invoice.fields.get("VendorName")
@@ -389,10 +434,63 @@ def analyze_invoice(invoiceUrl):
             )
     return extracted
 
+
+extracted = analyze_invoice("invoices/invoice_sample.jpg")
+for head,data in extracted.items():
+    data_df = pd.DataFrame.from_dict(data)
+    df = data_df.to_json()
+    print(df)
+
+    # create_table_sql = f"""
+    # CREATE COLUMN TABLE "{'DBADMIN'}"."{'ocrdata'}" (
+    #     {', '.join([f'"{col}" NVARCHAR(255)' for col in data_df.columns])}
+    # )
+    # """
+
+    create_table_sql = "CREATE COLUMN TABLE ocrdata ("
+    for column_name, dtype in data_df.dtypes.items():
+        sql_data_type = "VARCHAR(255)"  # Default SQL data type (you can customize this)
+        if dtype == 'int64':
+            sql_data_type = "INTEGER"
+        elif dtype == 'float64':
+            sql_data_type = "DOUBLE"
+        elif dtype == 'datetime64':
+            sql_data_type = "TIMESTAMP"
+        create_table_sql += f'"{column_name}" {sql_data_type}, '
+    create_table_sql = create_table_sql.rstrip(', ') + ")"
+    # cursor.execute(create_table_sql)
+    print('table created')
+    data_to_insert = [tuple(row) for row in data_df.values]
+    schema_name = 'DBADMIN'
+    table_name = 'OCRDATA'
+    insert_sql = f"""
+    INSERT INTO "{schema_name}"."{table_name}"
+    VALUES ({', '.join(['?' for _ in data_df.columns])})
+    """
+
+    cursor.executemany(insert_sql, data_to_insert)
+
+    sapconn.commit()
+    print('data inserted')
+    sapconn.close()
+
+
+# connection.commit()
+
+# cursor.close()
+# conn.close()
+    # print(data_df)
+    # data_df = data_df.apply()
+    # data_df.to_csv('data.csv')
+
+# print(data_df.head(5))
 # if __name__ == "__main__":
 #     extracted = analyze_invoice("invoices/invoice_sample.jpg")
+
+
 
 #     print("----------------------------------------")
 #     print("----------------------------------------")
 #     print("----------------------------------------")
-#     print(extracted)
+#     print(extracted,'----')
+#     print(type(extracted),'----')
